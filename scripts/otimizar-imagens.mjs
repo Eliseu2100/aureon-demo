@@ -37,18 +37,22 @@ const OBRAS = [
 // ficha 4:3 (a faixa de 44svh é quase quadrada).
 const FAIXAS = [{ nome: "obra-clinica", sufixo: "-faixa", larguras: [2560, 1920, 1280], proporcao: 1 / 2, focoY: 0.32 }];
 
+// Filtro opcional: `node scripts/otimizar-imagens.mjs obra-galpao` regrava só as imagens daquele nome.
+const filtro = process.argv[2];
+const quer = (nome) => !filtro || nome.startsWith(filtro);
+
 await mkdir(destino, { recursive: true });
 
 // A 17h é o LCP: no celular (vertical) e no 1280 o teto é 200 KB (STACK.md, seção 4).
 const LIMITE_LCP_KB = 200;
 
-async function gravar(pipelineFn, saida, rotulo, limite = LIMITE_KB) {
+async function gravar(pipelineFn, saida, rotulo, limite = LIMITE_KB, piso = 70) {
   let qualidade = 80;
-  // Desce a qualidade até caber no limite, sem passar de 70.
+  // Desce a qualidade até caber no limite, sem passar do piso (70 por padrão).
   for (;;) {
     await pipelineFn().webp({ quality: qualidade, effort: 6, smartSubsample: true }).toFile(saida);
     const kb = (await stat(saida)).size / 1024;
-    if (kb <= limite || qualidade <= 70) {
+    if (kb <= limite || qualidade <= piso) {
       console.log(`${path.basename(saida)}  ${rotulo}  q${qualidade}  ${kb.toFixed(0)} KB`);
       return;
     }
@@ -56,7 +60,7 @@ async function gravar(pipelineFn, saida, rotulo, limite = LIMITE_KB) {
   }
 }
 
-for (const nome of horas) {
+for (const nome of horas.filter(quer)) {
   for (const formato of [HORIZONTAL, VERTICAL]) {
     const entrada = path.join(origem, `${nome}${formato.sufixo}.png`);
     for (const largura of formato.larguras) {
@@ -72,17 +76,20 @@ for (const nome of horas) {
   }
 }
 
-for (const o of OBRAS) {
+// Obras: 300 KB por arquivo (auditoria de 14/11/2026 apontou obra-galpao-1600 com 353 KB). O piso de
+// qualidade desce a 50 só aqui: são fotos de ficha, não o LCP, e o recorte fica com detalhe de sobra.
+const LIMITE_OBRA_KB = 300;
+for (const o of OBRAS.filter((x) => quer(x.nome))) {
   const entrada = path.join(origem, `${o.nome}.png`);
   const meta = await sharp(entrada).metadata();
   for (const largura of o.larguras) {
     const saida = path.join(destino, `${o.nome}-${largura}.webp`);
     const altura = Math.round((largura * meta.height) / meta.width);
-    await gravar(() => sharp(entrada).resize(largura, altura, { kernel: "lanczos3" }), saida, `${largura}x${altura}`);
+    await gravar(() => sharp(entrada).resize(largura, altura, { kernel: "lanczos3" }), saida, `${largura}x${altura}`, LIMITE_OBRA_KB, 50);
   }
 }
 
-for (const f of FAIXAS) {
+for (const f of FAIXAS.filter((x) => quer(x.nome))) {
   const entrada = path.join(origem, `${f.nome}.png`);
   const meta = await sharp(entrada).metadata();
   const h = Math.round(meta.width * f.proporcao);
